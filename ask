@@ -1,11 +1,52 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-MODEL="gpt-oss:120b-cloud"
-API="http://69.142.141.135:11434/api/generate"
+MODEL_DEFAULT="PopPooB-D:latest"
+API_DEFAULT="http://96.242.172.92:11434/api/generate"
+
+MODEL="${ASK_MODEL:-$MODEL_DEFAULT}"
+API="${ASK_API:-$API_DEFAULT}"
 
 LANG_MODE="auto"
 MODE="explain"
+STREAM="false"
+INCLUDE_SYSTEM_INFO="false"
+TASK_OVERRIDE=""
 TEXT=""
+
+print_help() {
+  cat <<'USAGE'
+Usage:
+  ask [options] [text]
+
+Options:
+  --zh | --en                Force response language
+  --translate | --explain     Choose mode (default: explain)
+  --model <name>             Override model
+  --api <url>                Override API endpoint
+  --stream                   Stream tokens as they arrive
+  --system-info              Include basic system info in the prompt
+  --task <text>              Override the default task description
+  -h | --help                Show this help
+
+Available models:
+  PopPooB-D:latest
+  PopPooB-G:latest
+  PopPooB-Uncensored:latest
+  PopPooB-Pin-Yin:latest
+
+Examples:
+  ask --explain "What does dmesg do?"
+  echo "systemd" | ask --translate
+USAGE
+}
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing dependency: $1" >&2
+    exit 1
+  fi
+}
 
 # -------------------------
 # Parse arguments
@@ -16,11 +57,18 @@ while [ $# -gt 0 ]; do
     --en) LANG_MODE="en" ;;
     --translate) MODE="translate" ;;
     --explain) MODE="explain" ;;
-    --model) MODEL="$2"; shift ;;
+    --model) MODEL="${2:-}"; shift ;;
+    --api) API="${2:-}"; shift ;;
+    --stream) STREAM="true" ;;
+    --system-info) INCLUDE_SYSTEM_INFO="true" ;;
+    --task) TASK_OVERRIDE="${2:-}"; shift ;;
+    -h|--help) print_help; exit 0 ;;
     *) TEXT="$TEXT $1" ;;
   esac
   shift
 done
+
+TEXT="${TEXT# }"
 
 # Read stdin if no args
 if [ -z "$TEXT" ] && ! tty -s; then
@@ -28,9 +76,15 @@ if [ -z "$TEXT" ] && ! tty -s; then
 fi
 
 if [ -z "$TEXT" ]; then
-  echo "Usage:"
-  echo "  ask [--zh|--en] [--explain|--translate] text"
-  echo "  command | ask"
+  print_help
+  exit 1
+fi
+
+require_cmd jq
+require_cmd curl
+
+if [ -z "$MODEL" ] || [ -z "$API" ]; then
+  echo "Model and API must be specified." >&2
   exit 1
 fi
 
@@ -54,10 +108,31 @@ else
   TASK_DESC="Explain the following text clearly as a system assistant."
 fi
 
+if [ -n "$TASK_OVERRIDE" ]; then
+  TASK_DESC="$TASK_OVERRIDE"
+fi
+
+SYSTEM_INFO=""
+if [ "$INCLUDE_SYSTEM_INFO" = "true" ]; then
+  KERNEL_INFO="$(uname -a 2>/dev/null || true)"
+  UPTIME_INFO="$(uptime -p 2>/dev/null || true)"
+  OS_INFO="$(lsb_release -d 2>/dev/null | cut -d: -f2- | xargs || true)"
+  SYSTEM_INFO=$(cat <<'INFO'
+System info:
+- Kernel: __KERNEL__
+- Uptime: __UPTIME__
+- OS: __OS__
+INFO
+)
+  SYSTEM_INFO=${SYSTEM_INFO/__KERNEL__/${KERNEL_INFO}}
+  SYSTEM_INFO=${SYSTEM_INFO/__UPTIME__/${UPTIME_INFO}}
+  SYSTEM_INFO=${SYSTEM_INFO/__OS__/${OS_INFO}}
+fi
+
 # -------------------------
 # Build prompt
 # -------------------------
-PROMPT=$(cat <<EOF
+PROMPT=$(cat <<PROMPT
 You are a Linux system assistant integrated into the OS.
 
 Reply language:
@@ -73,12 +148,13 @@ Rules:
 - No emojis
 - No speculation
 
+$SYSTEM_INFO
 Task:
 $TASK_DESC
 
 Input:
 $TEXT
-EOF
+PROMPT
 )
 
 JSON_PROMPT=$(jq -Rn --arg p "$PROMPT" '$p')
@@ -86,12 +162,15 @@ JSON_PROMPT=$(jq -Rn --arg p "$PROMPT" '$p')
 # -------------------------
 # Call Ollama
 # -------------------------
-curl -s "$API" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"model\": \"$MODEL\",
-    \"stream\": false,
-    \"prompt\": $JSON_PROMPT
-  }" \
-| jq -r '.response' \
-| sed 's/\\n/\n/g'
+if [ "$STREAM" = "true" ]; then
+  curl -sN "$API" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"$MODEL\", \"stream\": true, \"prompt\": $JSON_PROMPT}" \
+  | jq -r 'if .response then .response else empty end'
+else
+  curl -s "$API" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"$MODEL\", \"stream\": false, \"prompt\": $JSON_PROMPT}" \
+  | jq -r '.response' \
+  | sed 's/\\n/\n/g'
+fi
