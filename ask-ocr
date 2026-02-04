@@ -5,7 +5,7 @@ MODE="explain"
 OCR_LANG="chi_sim+eng"
 TASK_OVERRIDE=""
 
-print_help() {
+usage() {
   cat <<'USAGE'
 Usage:
   ask-ocr [options]
@@ -25,41 +25,25 @@ while [ $# -gt 0 ]; do
     --explain) MODE="explain" ;;
     --lang) OCR_LANG="${2:-}"; shift ;;
     --task) TASK_OVERRIDE="${2:-}"; shift ;;
-    -h|--help) print_help; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
   shift
-done
+ done
 
-if ! command -v flameshot >/dev/null 2>&1; then
-  echo "❌ flameshot is required for screenshot capture" >&2
-  exit 1
-fi
-if ! command -v tesseract >/dev/null 2>&1; then
-  echo "❌ tesseract is required for OCR" >&2
-  exit 1
-fi
+command -v flameshot >/dev/null 2>&1 || { echo "❌ flameshot is required for screenshot capture" >&2; exit 1; }
+command -v tesseract >/dev/null 2>&1 || { echo "❌ tesseract is required for OCR" >&2; exit 1; }
 
 TMP_IMG=$(mktemp /tmp/ask_ocr_XXXXXX.png)
 TMP_TXT=$(mktemp /tmp/ask_ocr_XXXXXX.txt)
+trap 'rm -f "$TMP_IMG" "$TMP_TXT"' EXIT
 
-cleanup() {
-  rm -f "$TMP_IMG" "$TMP_TXT"
-}
-trap cleanup EXIT
-
-# Take screenshot (user selects area)
 flameshot gui -p "$TMP_IMG" >/dev/null 2>&1 || exit 1
 
-# OCR (Chinese + English)
 tesseract "$TMP_IMG" "${TMP_TXT%.*}" -l "$OCR_LANG" >/dev/null 2>&1
+TEXT=$(sed '/^\s*$/d' "$TMP_TXT")
 
-TEXT=$(cat "$TMP_TXT" | sed '/^\s*$/d')
-
-if [ -z "$TEXT" ]; then
-  echo "❌ OCR found no text"
-  exit 1
-fi
+[ -n "$TEXT" ] || { echo "❌ OCR found no text" >&2; exit 1; }
 
 if [ -n "$TASK_OVERRIDE" ]; then
   PROMPT="$TASK_OVERRIDE"

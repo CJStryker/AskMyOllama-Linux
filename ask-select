@@ -4,7 +4,7 @@ set -euo pipefail
 MODE="explain"
 TASK_OVERRIDE=""
 
-print_help() {
+usage() {
   cat <<'USAGE'
 Usage:
   ask-select [options]
@@ -22,29 +22,29 @@ while [ $# -gt 0 ]; do
     --translate) MODE="translate" ;;
     --explain) MODE="explain" ;;
     --task) TASK_OVERRIDE="${2:-}"; shift ;;
-    -h|--help) print_help; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
   shift
-done
+ done
 
-if command -v xclip >/dev/null 2>&1; then
-  TEXT=$(xclip -selection primary -o 2>/dev/null || true)
-elif command -v wl-paste >/dev/null 2>&1; then
-  TEXT=$(wl-paste --primary 2>/dev/null || true)
-else
+get_selection() {
+  if command -v xclip >/dev/null 2>&1; then
+    xclip -selection primary -o 2>/dev/null || true
+    return
+  fi
+  if command -v wl-paste >/dev/null 2>&1; then
+    wl-paste --primary 2>/dev/null || true
+    return
+  fi
   echo "❌ xclip or wl-paste required for selection support" >&2
   exit 1
-fi
+}
 
-if [ -z "$TEXT" ]; then
-  echo "❌ No text selected"
-  exit 1
-fi
+TEXT="$(get_selection)"
+[ -n "$TEXT" ] || { echo "❌ No text selected" >&2; exit 1; }
 
 ASK_ARGS=(--"$MODE")
-if [ -n "$TASK_OVERRIDE" ]; then
-  ASK_ARGS+=(--task "$TASK_OVERRIDE")
-fi
+[ -n "$TASK_OVERRIDE" ] && ASK_ARGS+=(--task "$TASK_OVERRIDE")
 
 printf '%s\n' "$TEXT" | ask "${ASK_ARGS[@]}"

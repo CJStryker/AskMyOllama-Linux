@@ -4,7 +4,7 @@ set -euo pipefail
 LANG_MODE="en"
 TASK=""
 
-print_help() {
+usage() {
   cat <<'USAGE'
 Usage:
   ask-operator-simulate.sh [options] [task]
@@ -19,26 +19,20 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --en) LANG_MODE="en" ;;
     --zh) LANG_MODE="zh" ;;
-    -h|--help) print_help; exit 0 ;;
+    -h|--help) usage; exit 0 ;;
     *) TASK="$TASK $1" ;;
   esac
   shift
-done
+ done
 
 TASK="${TASK# }"
-
 if [ -z "$TASK" ] && ! tty -s; then
   TASK="$(cat)"
 fi
-
 if [ -z "$TASK" ]; then
   read -p "Simulate task: " TASK
 fi
-
-if [ -z "$TASK" ]; then
-  echo "No task provided. Exiting." >&2
-  exit 1
-fi
+[ -n "$TASK" ] || { echo "No task provided. Exiting." >&2; exit 1; }
 
 PROMPT="Simulate the following Linux task.
 Do NOT give commands.

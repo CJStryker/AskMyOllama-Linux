@@ -5,7 +5,7 @@ MODE="explain"
 SELECTION="clipboard"
 TASK_OVERRIDE=""
 
-print_help() {
+usage() {
   cat <<'USAGE'
 Usage:
   ask-clip [options]
@@ -27,38 +27,35 @@ while [ $# -gt 0 ]; do
     --primary) SELECTION="primary" ;;
     --clipboard) SELECTION="clipboard" ;;
     --task) TASK_OVERRIDE="${2:-}"; shift ;;
-    -h|--help) print_help; exit 0 ;;
-    *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
   esac
   shift
-done
+ done
 
-# Try common clipboard tools
-if command -v xclip >/dev/null 2>&1; then
-  if [ "$SELECTION" = "primary" ]; then
-    TEXT=$(xclip -selection primary -o 2>/dev/null || true)
-  else
-    TEXT=$(xclip -selection clipboard -o 2>/dev/null || true)
+get_clip() {
+  if command -v xclip >/dev/null 2>&1; then
+    local sel="clipboard"
+    [ "$SELECTION" = "primary" ] && sel="primary"
+    xclip -selection "$sel" -o 2>/dev/null || true
+    return
   fi
-elif command -v wl-paste >/dev/null 2>&1; then
-  if [ "$SELECTION" = "primary" ]; then
-    TEXT=$(wl-paste --primary 2>/dev/null || true)
-  else
-    TEXT=$(wl-paste 2>/dev/null || true)
+  if command -v wl-paste >/dev/null 2>&1; then
+    if [ "$SELECTION" = "primary" ]; then
+      wl-paste --primary 2>/dev/null || true
+    else
+      wl-paste 2>/dev/null || true
+    fi
+    return
   fi
-else
   echo "❌ No clipboard tool found (xclip or wl-clipboard required)" >&2
   exit 1
-fi
+}
 
-if [ -z "${TEXT:-}" ]; then
-  echo "❌ Clipboard is empty" >&2
-  exit 1
-fi
+TEXT="$(get_clip)"
+[ -n "${TEXT:-}" ] || { echo "❌ Clipboard is empty" >&2; exit 1; }
 
 ASK_ARGS=(--"$MODE")
-if [ -n "$TASK_OVERRIDE" ]; then
-  ASK_ARGS+=(--task "$TASK_OVERRIDE")
-fi
+[ -n "$TASK_OVERRIDE" ] && ASK_ARGS+=(--task "$TASK_OVERRIDE")
 
 printf '%s\n' "$TEXT" | ask "${ASK_ARGS[@]}"
