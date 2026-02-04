@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+
+MODEL="gpt-oss:120b-cloud"
+API="http://69.142.141.135:11434/api/generate"
+
+LANG_MODE="auto"
+MODE="explain"
+TEXT=""
+
+# -------------------------
+# Parse arguments
+# -------------------------
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --zh) LANG_MODE="zh" ;;
+    --en) LANG_MODE="en" ;;
+    --translate) MODE="translate" ;;
+    --explain) MODE="explain" ;;
+    --model) MODEL="$2"; shift ;;
+    *) TEXT="$TEXT $1" ;;
+  esac
+  shift
+done
+
+# Read stdin if no args
+if [ -z "$TEXT" ] && ! tty -s; then
+  TEXT="$(cat)"
+fi
+
+if [ -z "$TEXT" ]; then
+  echo "Usage:"
+  echo "  ask [--zh|--en] [--explain|--translate] text"
+  echo "  command | ask"
+  exit 1
+fi
+
+# -------------------------
+# Auto language detection
+# -------------------------
+if [ "$LANG_MODE" = "auto" ]; then
+  if echo "$TEXT" | grep -qP '[\x{4e00}-\x{9fff}]'; then
+    LANG_MODE="zh"
+  else
+    LANG_MODE="en"
+  fi
+fi
+
+# -------------------------
+# Mode handling
+# -------------------------
+if [ "$MODE" = "translate" ]; then
+  TASK_DESC="Translate the following text accurately."
+else
+  TASK_DESC="Explain the following text clearly as a system assistant."
+fi
+
+# -------------------------
+# Build prompt
+# -------------------------
+PROMPT=$(cat <<EOF
+You are a Linux system assistant integrated into the OS.
+
+Reply language:
+- zh: Simplified Chinese
+- en: English
+
+Current language: $LANG_MODE
+Mode: $MODE
+
+Rules:
+- Be concise
+- No markdown
+- No emojis
+- No speculation
+
+Task:
+$TASK_DESC
+
+Input:
+$TEXT
+EOF
+)
+
+JSON_PROMPT=$(jq -Rn --arg p "$PROMPT" '$p')
+
+# -------------------------
+# Call Ollama
+# -------------------------
+curl -s "$API" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"model\": \"$MODEL\",
+    \"stream\": false,
+    \"prompt\": $JSON_PROMPT
+  }" \
+| jq -r '.response' \
+| sed 's/\\n/\n/g'

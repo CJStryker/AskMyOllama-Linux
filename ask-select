@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+if command -v xclip >/dev/null; then
+  TEXT=$(xclip -selection primary -o 2>/dev/null)
+else
+  echo "❌ xclip required for selection support"
+  exit 1
+fi
+
+if [ -z "$TEXT" ]; then
+  echo "❌ No text selected"
+  exit 1
+fi
+
+ask "$TEXT"

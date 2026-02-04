@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+cat ~/.autonomy/proposal.json | jq
+echo
+read -p "[a]pprove  [d]ecline  [q]uit > " c
+case "$c" in
+  a) echo approved > ~/.autonomy/remote_decision ;;
+  d) echo declined > ~/.autonomy/remote_decision ;;
+esac

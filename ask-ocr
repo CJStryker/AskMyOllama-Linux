@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -e
+
+TMP_IMG="/tmp/ask_ocr_$$.png"
+TMP_TXT="/tmp/ask_ocr_$$.txt"
+
+# Take screenshot (user selects area)
+flameshot gui -p "$TMP_IMG" >/dev/null 2>&1 || exit 1
+
+# OCR (Chinese + English)
+tesseract "$TMP_IMG" "$TMP_TXT" -l chi_sim+eng >/dev/null 2>&1
+
+TEXT=$(cat "$TMP_TXT.txt" | sed '/^\s*$/d')
+
+rm -f "$TMP_IMG" "$TMP_TXT.txt"
+
+if [ -z "$TEXT" ]; then
+  echo "❌ OCR found no text"
+  exit 1
+fi
+
+echo "$TEXT" | ask "Explain or translate the following text."

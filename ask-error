@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+
+ERRORS=$(journalctl -p err -n 30 --no-pager 2>/dev/null)
+
+if [ -z "$ERRORS" ]; then
+  echo "No recent system errors found."
+  exit 0
+fi
+
+echo "$ERRORS" | ask "Explain these system errors and what they usually mean."

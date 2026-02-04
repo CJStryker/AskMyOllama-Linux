@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+set -e
+
+AUTON="$HOME/.autonomy"
+LOG="$AUTON/autonomy.log"
+PROP="$AUTON/proposal.json"
+
+mkdir -p "$AUTON"
+
+log() {
+  echo "[$(date -Is)] $1" >> "$LOG"
+}
+
+divider() {
+  echo "────────────────────────────────────"
+}
+
+# -------- Task input --------
+if [ "$#" -gt 0 ]; then
+  TASK="$*"
+else
+  read -p "🧠 Task: " TASK
+fi
+
+if [ -z "$TASK" ]; then
+  echo "No task provided."
+  exit 1
+fi
+
+echo
+echo "🧠 AUTONOMY OPERATOR"
+divider
+echo "Task: $TASK"
+divider
+echo
+
+log "TASK: $TASK"
+
+# -------- Planner --------
+echo "▶ Planning…"
+planner.py "$TASK" >/dev/null
+log "Planner completed"
+
+# -------- Show proposal summary --------
+if [ ! -f "$PROP" ]; then
+  echo "❌ Planner failed to produce proposal."
+  exit 1
+fi
+
+CONF=$(jq -r '.confidence' "$PROP")
+STEPS=$(jq -r '.steps | length' "$PROP")
+
+echo "✔ Plan ready"
+echo "  Confidence: $(printf "%.0f" "$(echo "$CONF * 100" | bc -l)")%"
+echo "  Steps: $STEPS"
+echo
+
+divider
+echo "📋 Proposed Steps"
+divider
+
+jq -r '.steps[] | "• \(.id): \(.description)  [risk: \(.risk)]"' "$PROP"
+
+echo
+divider
+
+# -------- Debate --------
+echo "▶ Analyzing steps (debate)…"
+echo "  (running in background; this may take a moment)"
+
+# Run debate quietly but non-blocking
+(
+  debate.py >>"$LOG" 2>&1
+) &
+
+DEBATE_PID=$!
+
+# Lightweight progress indicator
+while kill -0 "$DEBATE_PID" 2>/dev/null; do
+  printf "."
+  sleep 2
+done
+echo
+echo "✔ Debate complete"
+log "Debate completed"
+
+echo
+divider
+echo "▶ Opening operator UI"
+divider
+echo
+
+# -------- UI --------
+proposal-ui.py &
+
+wait
+
+echo
+divider
+echo "✔ Session finished"
+divider
+log "Session finished"
