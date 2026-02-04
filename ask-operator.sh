@@ -3,7 +3,7 @@ set -e
 
 # ---------------- Configuration ----------------
 MODEL="gpt-oss:120b-cloud"
-API="http://69.142.141.135:11434/api/generate"
+API="http://96.242.172.92:11434/api/generate"
 LOG="$HOME/.autonomy/ask-operator.log"
 
 mkdir -p "$HOME/.autonomy"

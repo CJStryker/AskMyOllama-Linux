@@ -2,7 +2,7 @@
 set -euo pipefail
 
 MODEL_DEFAULT="gpt-oss:120b-cloud"
-API_DEFAULT="http://69.142.141.135:11434/api/generate"
+API_DEFAULT="http://96.242.172.92:11434/api/generate"
 
 MODEL="${ASK_MODEL:-$MODEL_DEFAULT}"
 API="${ASK_API:-$API_DEFAULT}"
