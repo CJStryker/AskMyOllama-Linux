@@ -1,42 +1,87 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-MODEL="gpt-oss:120b-cloud"
-API="http://69.142.141.135:11434/api/generate"
+MODEL_DEFAULT="PopPooB-D:latest"
+API_DEFAULT="http://96.242.172.92:11434/api/generate"
 
+MODEL="${ASK_MODEL:-$MODEL_DEFAULT}"
+API="${ASK_API:-$API_DEFAULT}"
 LANG_MODE="auto"
 MODE="explain"
+STREAM=false
+SYSTEM_INFO=false
+RAW_PROMPT=false
+TASK_OVERRIDE=""
+TIMEOUT_SECONDS=""
 TEXT=""
 
-# -------------------------
-# Parse arguments
-# -------------------------
+usage() {
+  cat <<'USAGE'
+Usage:
+  ask [options] [text]
+
+Options:
+  --zh | --en                Force response language
+  --translate | --explain     Choose mode (default: explain)
+  --model <name>             Override model
+  --api <url>                Override API endpoint
+  --stream                   Stream tokens as they arrive
+  --system-info              Include basic system info in the prompt
+  --task <text>              Override the default task description
+  --raw                      Send input as-is (no system prompt)
+  --timeout <seconds>        Curl timeout in seconds
+  -h | --help                Show this help
+
+Available models:
+  PopPooB-D:latest
+  PopPooB-G:latest
+  PopPooB-Uncensored:latest
+  PopPooB-Pin-Yin:latest
+
+Examples:
+  ask --explain "What does dmesg do?"
+  echo "systemd" | ask --translate
+USAGE
+}
+
+die() {
+  echo "$1" >&2
+  exit 1
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || die "Missing dependency: $1"
+}
+
 while [ $# -gt 0 ]; do
   case "$1" in
     --zh) LANG_MODE="zh" ;;
     --en) LANG_MODE="en" ;;
     --translate) MODE="translate" ;;
     --explain) MODE="explain" ;;
-    --model) MODEL="$2"; shift ;;
+    --model) MODEL="${2:-}"; shift ;;
+    --api) API="${2:-}"; shift ;;
+    --stream) STREAM=true ;;
+    --system-info) SYSTEM_INFO=true ;;
+    --task) TASK_OVERRIDE="${2:-}"; shift ;;
+    --raw) RAW_PROMPT=true ;;
+    --timeout) TIMEOUT_SECONDS="${2:-}"; shift ;;
+    -h|--help) usage; exit 0 ;;
     *) TEXT="$TEXT $1" ;;
   esac
   shift
-done
+ done
 
-# Read stdin if no args
+TEXT="${TEXT# }"
 if [ -z "$TEXT" ] && ! tty -s; then
   TEXT="$(cat)"
 fi
+[ -n "$TEXT" ] || { usage; exit 1; }
 
-if [ -z "$TEXT" ]; then
-  echo "Usage:"
-  echo "  ask [--zh|--en] [--explain|--translate] text"
-  echo "  command | ask"
-  exit 1
-fi
+need jq
+need curl
+[ -n "$MODEL" ] && [ -n "$API" ] || die "Model and API must be specified."
 
-# -------------------------
-# Auto language detection
-# -------------------------
 if [ "$LANG_MODE" = "auto" ]; then
   if echo "$TEXT" | grep -qP '[\x{4e00}-\x{9fff}]'; then
     LANG_MODE="zh"
@@ -45,19 +90,28 @@ if [ "$LANG_MODE" = "auto" ]; then
   fi
 fi
 
-# -------------------------
-# Mode handling
-# -------------------------
 if [ "$MODE" = "translate" ]; then
   TASK_DESC="Translate the following text accurately."
 else
   TASK_DESC="Explain the following text clearly as a system assistant."
 fi
+[ -n "$TASK_OVERRIDE" ] && TASK_DESC="$TASK_OVERRIDE"
 
-# -------------------------
-# Build prompt
-# -------------------------
-PROMPT=$(cat <<EOF
+SYS_BLOCK=""
+if [ "$SYSTEM_INFO" = true ]; then
+  KERNEL_INFO="$(uname -a 2>/dev/null || true)"
+  UPTIME_INFO="$(uptime -p 2>/dev/null || true)"
+  OS_INFO="$(lsb_release -d 2>/dev/null | cut -d: -f2- | xargs || true)"
+  SYS_BLOCK=$(cat <<INFO
+System info:
+- Kernel: ${KERNEL_INFO}
+- Uptime: ${UPTIME_INFO}
+- OS: ${OS_INFO}
+INFO
+)
+fi
+
+PROMPT=$(cat <<PROMPT
 You are a Linux system assistant integrated into the OS.
 
 Reply language:
@@ -73,25 +127,32 @@ Rules:
 - No emojis
 - No speculation
 
+$SYS_BLOCK
 Task:
 $TASK_DESC
 
 Input:
 $TEXT
-EOF
+PROMPT
 )
 
-JSON_PROMPT=$(jq -Rn --arg p "$PROMPT" '$p')
+if [ "$RAW_PROMPT" = true ]; then
+  PROMPT="$TEXT"
+fi
 
-# -------------------------
-# Call Ollama
-# -------------------------
-curl -s "$API" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"model\": \"$MODEL\",
-    \"stream\": false,
-    \"prompt\": $JSON_PROMPT
-  }" \
-| jq -r '.response' \
-| sed 's/\\n/\n/g'
+JSON_PROMPT=$(jq -Rn --arg p "$PROMPT" '$p')
+CURL_ARGS=()
+[ -n "$TIMEOUT_SECONDS" ] && CURL_ARGS+=(--max-time "$TIMEOUT_SECONDS")
+
+if [ "$STREAM" = true ]; then
+  curl -sN "${CURL_ARGS[@]}" "$API" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"$MODEL\", \"stream\": true, \"prompt\": $JSON_PROMPT}" \
+  | jq -r 'if .response then .response else empty end'
+else
+  curl -s "${CURL_ARGS[@]}" "$API" \
+    -H "Content-Type: application/json" \
+    -d "{\"model\": \"$MODEL\", \"stream\": false, \"prompt\": $JSON_PROMPT}" \
+  | jq -r '.response' \
+  | sed 's/\\n/\n/g'
+fi
