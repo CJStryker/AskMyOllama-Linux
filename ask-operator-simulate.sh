@@ -1,10 +1,47 @@
 #!/usr/bin/env bash
-read -p "Simulate task: " TASK
+set -euo pipefail
 
-ask --en "
-Simulate the following Linux task.
+LANG_MODE="en"
+TASK=""
+
+print_help() {
+  cat <<'USAGE'
+Usage:
+  ask-operator-simulate.sh [options] [task]
+
+Options:
+  --en | --zh         Response language (default: en)
+  -h | --help         Show this help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --en) LANG_MODE="en" ;;
+    --zh) LANG_MODE="zh" ;;
+    -h|--help) print_help; exit 0 ;;
+    *) TASK="$TASK $1" ;;
+  esac
+  shift
+done
+
+TASK="${TASK# }"
+
+if [ -z "$TASK" ] && ! tty -s; then
+  TASK="$(cat)"
+fi
+
+if [ -z "$TASK" ]; then
+  read -p "Simulate task: " TASK
+fi
+
+if [ -z "$TASK" ]; then
+  echo "No task provided. Exiting." >&2
+  exit 1
+fi
+
+PROMPT="Simulate the following Linux task.
 Do NOT give commands.
-Explain what would likely happen step by step.
-Task:
-$TASK
-"
+Explain what would likely happen step by step."
+
+ask --"$LANG_MODE" --task "$PROMPT" "$TASK"

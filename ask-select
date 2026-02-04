@@ -1,9 +1,39 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-if command -v xclip >/dev/null; then
-  TEXT=$(xclip -selection primary -o 2>/dev/null)
+MODE="explain"
+TASK_OVERRIDE=""
+
+print_help() {
+  cat <<'USAGE'
+Usage:
+  ask-select [options]
+
+Options:
+  --translate         Translate the selected text
+  --explain           Explain the selected text (default)
+  --task <text>       Override the default task description
+  -h | --help         Show this help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --translate) MODE="translate" ;;
+    --explain) MODE="explain" ;;
+    --task) TASK_OVERRIDE="${2:-}"; shift ;;
+    -h|--help) print_help; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
+  esac
+  shift
+done
+
+if command -v xclip >/dev/null 2>&1; then
+  TEXT=$(xclip -selection primary -o 2>/dev/null || true)
+elif command -v wl-paste >/dev/null 2>&1; then
+  TEXT=$(wl-paste --primary 2>/dev/null || true)
 else
-  echo "❌ xclip required for selection support"
+  echo "❌ xclip or wl-paste required for selection support" >&2
   exit 1
 fi
 
@@ -12,4 +42,9 @@ if [ -z "$TEXT" ]; then
   exit 1
 fi
 
-ask "$TEXT"
+ASK_ARGS=(--"$MODE")
+if [ -n "$TASK_OVERRIDE" ]; then
+  ASK_ARGS+=(--task "$TASK_OVERRIDE")
+fi
+
+printf '%s\n' "$TEXT" | ask "${ASK_ARGS[@]}"
