@@ -1,10 +1,44 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-ERRORS=$(journalctl -p err -n 30 --no-pager 2>/dev/null)
+LINES=30
+PRIORITY="err"
+EXTRA_PROMPT="Explain these system errors and what they usually mean."
+
+print_help() {
+  cat <<'USAGE'
+Usage:
+  ask-error [options]
+
+Options:
+  --lines <n>         Number of journal lines to fetch (default: 30)
+  --priority <level>  Journal priority (default: err)
+  --prompt <text>     Custom prompt for the assistant
+  -h | --help         Show this help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lines) LINES="${2:-}"; shift ;;
+    --priority) PRIORITY="${2:-}"; shift ;;
+    --prompt) EXTRA_PROMPT="${2:-}"; shift ;;
+    -h|--help) print_help; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
+  esac
+  shift
+done
+
+if ! command -v journalctl >/dev/null 2>&1; then
+  echo "journalctl is required to read system errors." >&2
+  exit 1
+fi
+
+ERRORS=$(journalctl -p "$PRIORITY" -n "$LINES" --no-pager 2>/dev/null || true)
 
 if [ -z "$ERRORS" ]; then
   echo "No recent system errors found."
   exit 0
 fi
 
-echo "$ERRORS" | ask "Explain these system errors and what they usually mean."
+echo "$ERRORS" | ask "$EXTRA_PROMPT"
