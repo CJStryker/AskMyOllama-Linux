@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_DEFAULT="gpt-oss:120b-cloud"
+MODEL_DEFAULT="PopPooB-D:latest"
 API_DEFAULT="http://96.242.172.92:11434/api/generate"
 
 MODEL="${ASK_MODEL:-$MODEL_DEFAULT}"
@@ -28,6 +28,12 @@ Options:
   --system-info              Include basic system info in the prompt
   --task <text>              Override the default task description
   -h | --help                Show this help
+
+Available models:
+  PopPooB-D:latest
+  PopPooB-G:latest
+  PopPooB-Uncensored:latest
+  PopPooB-Pin-Yin:latest
 
 Examples:
   ask --explain "What does dmesg do?"

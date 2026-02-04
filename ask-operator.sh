@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ---------------- Configuration ----------------
-MODEL_DEFAULT="gpt-oss:120b-cloud"
+MODEL_DEFAULT="PopPooB-D:latest"
 API_DEFAULT="http://96.242.172.92:11434/api/generate"
 LOG_DEFAULT="$HOME/.autonomy/ask-operator.log"
 
@@ -29,6 +29,16 @@ Options:
 USAGE
 }
 
+print_models() {
+  cat <<'MODELS'
+Available models:
+  PopPooB-D:latest
+  PopPooB-G:latest
+  PopPooB-Uncensored:latest
+  PopPooB-Pin-Yin:latest
+MODELS
+}
+
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
     echo "Missing dependency: $1" >&2
@@ -43,7 +53,7 @@ while [ $# -gt 0 ]; do
     --log) LOG="${2:-}"; shift ;;
     --auto-approve) AUTO_APPROVE="true" ;;
     --max-steps) MAX_STEPS="${2:-}"; shift ;;
-    -h|--help) print_help; exit 0 ;;
+    -h|--help) print_help; print_models; exit 0 ;;
     *) TASK="${TASK:-} $1" ;;
   esac
   shift
