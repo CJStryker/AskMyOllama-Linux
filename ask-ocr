@@ -3,6 +3,7 @@ set -euo pipefail
 
 MODE="explain"
 OCR_LANG="chi_sim+eng"
+TASK_OVERRIDE=""
 
 print_help() {
   cat <<'USAGE'
@@ -13,6 +14,7 @@ Options:
   --translate         Translate the OCR text
   --explain           Explain the OCR text (default)
   --lang <langs>      Tesseract language(s) (default: chi_sim+eng)
+  --task <text>       Override the default task description
   -h | --help         Show this help
 USAGE
 }
@@ -22,6 +24,7 @@ while [ $# -gt 0 ]; do
     --translate) MODE="translate" ;;
     --explain) MODE="explain" ;;
     --lang) OCR_LANG="${2:-}"; shift ;;
+    --task) TASK_OVERRIDE="${2:-}"; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
   esac
@@ -58,7 +61,9 @@ if [ -z "$TEXT" ]; then
   exit 1
 fi
 
-if [ "$MODE" = "translate" ]; then
+if [ -n "$TASK_OVERRIDE" ]; then
+  PROMPT="$TASK_OVERRIDE"
+elif [ "$MODE" = "translate" ]; then
   PROMPT="Translate the following text accurately."
 else
   PROMPT="Explain or translate the following text."

@@ -3,6 +3,7 @@ set -euo pipefail
 
 LINES=30
 PRIORITY="err"
+MODE="explain"
 EXTRA_PROMPT="Explain these system errors and what they usually mean."
 
 print_help() {
@@ -13,6 +14,8 @@ Usage:
 Options:
   --lines <n>         Number of journal lines to fetch (default: 30)
   --priority <level>  Journal priority (default: err)
+  --translate         Translate the error text
+  --explain           Explain the error text (default)
   --prompt <text>     Custom prompt for the assistant
   -h | --help         Show this help
 USAGE
@@ -22,6 +25,8 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --lines) LINES="${2:-}"; shift ;;
     --priority) PRIORITY="${2:-}"; shift ;;
+    --translate) MODE="translate" ;;
+    --explain) MODE="explain" ;;
     --prompt) EXTRA_PROMPT="${2:-}"; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
@@ -41,4 +46,4 @@ if [ -z "$ERRORS" ]; then
   exit 0
 fi
 
-echo "$ERRORS" | ask "$EXTRA_PROMPT"
+echo "$ERRORS" | ask --"$MODE" --task "$EXTRA_PROMPT"

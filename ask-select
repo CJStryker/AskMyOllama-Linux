@@ -2,6 +2,7 @@
 set -euo pipefail
 
 MODE="explain"
+TASK_OVERRIDE=""
 
 print_help() {
   cat <<'USAGE'
@@ -11,6 +12,7 @@ Usage:
 Options:
   --translate         Translate the selected text
   --explain           Explain the selected text (default)
+  --task <text>       Override the default task description
   -h | --help         Show this help
 USAGE
 }
@@ -19,6 +21,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --translate) MODE="translate" ;;
     --explain) MODE="explain" ;;
+    --task) TASK_OVERRIDE="${2:-}"; shift ;;
     -h|--help) print_help; exit 0 ;;
     *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
   esac
@@ -39,4 +42,9 @@ if [ -z "$TEXT" ]; then
   exit 1
 fi
 
-ask --"$MODE" "$TEXT"
+ASK_ARGS=(--"$MODE")
+if [ -n "$TASK_OVERRIDE" ]; then
+  ASK_ARGS+=(--task "$TASK_OVERRIDE")
+fi
+
+printf '%s\n' "$TEXT" | ask "${ASK_ARGS[@]}"
