@@ -1,10 +1,62 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-ERRORS=$(journalctl -p err -n 30 --no-pager 2>/dev/null)
+LINES=30
+PRIORITY="err"
+MODE="explain"
+EXTRA_PROMPT="Explain these system errors and what they usually mean."
+TIMEOUT_SECONDS=""
+
+print_help() {
+  cat <<'USAGE'
+Usage:
+  ask-error [options]
+
+Options:
+  --lines <n>         Number of journal lines to fetch (default: 30)
+  --priority <level>  Journal priority (default: err)
+  --translate         Translate the error text
+  --explain           Explain the error text (default)
+  --prompt <text>     Custom prompt for the assistant
+  --timeout <seconds> Curl timeout in seconds
+  -h | --help         Show this help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --lines) LINES="${2:-}"; shift ;;
+    --priority) PRIORITY="${2:-}"; shift ;;
+    --translate) MODE="translate" ;;
+    --explain) MODE="explain" ;;
+    --prompt) EXTRA_PROMPT="${2:-}"; shift ;;
+    --timeout) TIMEOUT_SECONDS="${2:-}"; shift ;;
+    -h|--help) print_help; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
+  esac
+  shift
+done
+
+if ! command -v journalctl >/dev/null 2>&1; then
+  echo "journalctl is required to read system errors." >&2
+  exit 1
+fi
+
+if ! [[ "$LINES" =~ ^[0-9]+$ ]]; then
+  echo "Lines must be a positive integer." >&2
+  exit 1
+fi
+
+ERRORS=$(journalctl -p "$PRIORITY" -n "$LINES" --no-pager 2>/dev/null || true)
 
 if [ -z "$ERRORS" ]; then
   echo "No recent system errors found."
   exit 0
 fi
 
-echo "$ERRORS" | ask "Explain these system errors and what they usually mean."
+ASK_ARGS=(--"$MODE" --task "$EXTRA_PROMPT")
+if [ -n "$TIMEOUT_SECONDS" ]; then
+  ASK_ARGS+=(--timeout "$TIMEOUT_SECONDS")
+fi
+
+echo "$ERRORS" | ask "${ASK_ARGS[@]}"

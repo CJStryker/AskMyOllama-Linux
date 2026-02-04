@@ -1,22 +1,72 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-TMP_IMG="/tmp/ask_ocr_$$.png"
-TMP_TXT="/tmp/ask_ocr_$$.txt"
+MODE="explain"
+OCR_LANG="chi_sim+eng"
+TASK_OVERRIDE=""
+
+print_help() {
+  cat <<'USAGE'
+Usage:
+  ask-ocr [options]
+
+Options:
+  --translate         Translate the OCR text
+  --explain           Explain the OCR text (default)
+  --lang <langs>      Tesseract language(s) (default: chi_sim+eng)
+  --task <text>       Override the default task description
+  -h | --help         Show this help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --translate) MODE="translate" ;;
+    --explain) MODE="explain" ;;
+    --lang) OCR_LANG="${2:-}"; shift ;;
+    --task) TASK_OVERRIDE="${2:-}"; shift ;;
+    -h|--help) print_help; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; print_help; exit 1 ;;
+  esac
+  shift
+done
+
+if ! command -v flameshot >/dev/null 2>&1; then
+  echo "❌ flameshot is required for screenshot capture" >&2
+  exit 1
+fi
+if ! command -v tesseract >/dev/null 2>&1; then
+  echo "❌ tesseract is required for OCR" >&2
+  exit 1
+fi
+
+TMP_IMG=$(mktemp /tmp/ask_ocr_XXXXXX.png)
+TMP_TXT=$(mktemp /tmp/ask_ocr_XXXXXX.txt)
+
+cleanup() {
+  rm -f "$TMP_IMG" "$TMP_TXT"
+}
+trap cleanup EXIT
 
 # Take screenshot (user selects area)
 flameshot gui -p "$TMP_IMG" >/dev/null 2>&1 || exit 1
 
 # OCR (Chinese + English)
-tesseract "$TMP_IMG" "$TMP_TXT" -l chi_sim+eng >/dev/null 2>&1
+tesseract "$TMP_IMG" "${TMP_TXT%.*}" -l "$OCR_LANG" >/dev/null 2>&1
 
-TEXT=$(cat "$TMP_TXT.txt" | sed '/^\s*$/d')
-
-rm -f "$TMP_IMG" "$TMP_TXT.txt"
+TEXT=$(cat "$TMP_TXT" | sed '/^\s*$/d')
 
 if [ -z "$TEXT" ]; then
   echo "❌ OCR found no text"
   exit 1
 fi
 
-echo "$TEXT" | ask "Explain or translate the following text."
+if [ -n "$TASK_OVERRIDE" ]; then
+  PROMPT="$TASK_OVERRIDE"
+elif [ "$MODE" = "translate" ]; then
+  PROMPT="Translate the following text accurately."
+else
+  PROMPT="Explain or translate the following text."
+fi
+
+echo "$TEXT" | ask --"$MODE" --task "$PROMPT"
