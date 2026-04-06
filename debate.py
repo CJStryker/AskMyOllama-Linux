@@ -71,21 +71,20 @@ def prompt_for(phase, step):
         "interpretation": "Explain the intent of this command:\n",
         "safety": "Assess the safety risks of executing this command on a Linux system:\n",
         "explanation": "Explain this command clearly to a system operator:\n",
-        "uncensored_review": (
-            "Be brutally honest about risks, abuse potential, and worst-case outcomes of "
-            "this command. Do not hold back:\n"
-        ),
         "alternate_view": "Provide an alternate perspective, edge cases, or hidden consequences:\n",
+        "persona_review": "Review this command from a specialist persona perspective and identify overlooked issues:\n",
+        "final_judge": "Provide a final verdict with concise approval/reject recommendation and confidence:\n",
     }
     return prompts[phase] + command_payload
 
 POPPOOB_MODELS = [
-    "PopPooB-D:latest",
-    "PopPooB-G:latest",
+    "PopPooB-Linux:latest",
+    "PopPooB-Dr:latest",
+    "PopPooB-Nurse:latest",
     "PopPooB-Pin-Yin:latest",
-    "PopPooB:latest",
+    "PopPooB-Chris:latest",
+    "mistral:7b",
 ]
-UNCENSORED_MODEL = "PopPooB-Uncensored:latest"
 DEFAULT_TIMEOUT = 120
 
 # ---------------- Per-step debate ----------------
@@ -99,7 +98,8 @@ for step in steps:
         ("safety", POPPOOB_MODELS[1]),
         ("explanation", POPPOOB_MODELS[2]),
         ("alternate_view", POPPOOB_MODELS[3]),
-        ("uncensored_review", UNCENSORED_MODEL),
+        ("persona_review", POPPOOB_MODELS[4]),
+        ("final_judge", POPPOOB_MODELS[5]),
     ]
 
     phase_outputs = []

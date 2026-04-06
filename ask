@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL_DEFAULT="PopPooB-D:latest"
+MODEL_DEFAULT="PopPooB-Linux:latest"
 API_DEFAULT="http://96.242.172.92:11434/api/generate"
 
 MODEL="${ASK_MODEL:-$MODEL_DEFAULT}"
@@ -33,10 +33,12 @@ Options:
   -h | --help                Show this help
 
 Available models:
-  PopPooB-D:latest
-  PopPooB-G:latest
-  PopPooB-Uncensored:latest
+  PopPooB-Chris:latest
+  PopPooB-Linux:latest
+  PopPooB-Nurse:latest
+  PopPooB-Dr:latest
   PopPooB-Pin-Yin:latest
+  mistral:7b
 
 Examples:
   ask --explain "What does dmesg do?"
