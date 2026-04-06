@@ -1,18 +1,61 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
-# Try common clipboard tools
-if command -v xclip >/dev/null; then
-  TEXT=$(xclip -selection clipboard -o 2>/dev/null)
-elif command -v wl-paste >/dev/null; then
-  TEXT=$(wl-paste 2>/dev/null)
-else
-  echo "❌ No clipboard tool found (xclip or wl-clipboard required)"
+MODE="explain"
+SELECTION="clipboard"
+TASK_OVERRIDE=""
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  ask-clip [options]
+
+Options:
+  --translate         Translate the clipboard text
+  --explain           Explain the clipboard text (default)
+  --primary           Use the primary selection (X11/Wayland)
+  --clipboard         Use the clipboard buffer (default)
+  --task <text>       Override the default task description
+  -h | --help         Show this help
+USAGE
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --translate) MODE="translate" ;;
+    --explain) MODE="explain" ;;
+    --primary) SELECTION="primary" ;;
+    --clipboard) SELECTION="clipboard" ;;
+    --task) TASK_OVERRIDE="${2:-}"; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "Unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+  shift
+ done
+
+get_clip() {
+  if command -v xclip >/dev/null 2>&1; then
+    local sel="clipboard"
+    [ "$SELECTION" = "primary" ] && sel="primary"
+    xclip -selection "$sel" -o 2>/dev/null || true
+    return
+  fi
+  if command -v wl-paste >/dev/null 2>&1; then
+    if [ "$SELECTION" = "primary" ]; then
+      wl-paste --primary 2>/dev/null || true
+    else
+      wl-paste 2>/dev/null || true
+    fi
+    return
+  fi
+  echo "❌ No clipboard tool found (xclip or wl-clipboard required)" >&2
   exit 1
-fi
+}
 
-if [ -z "$TEXT" ]; then
-  echo "❌ Clipboard is empty"
-  exit 1
-fi
+TEXT="$(get_clip)"
+[ -n "${TEXT:-}" ] || { echo "❌ Clipboard is empty" >&2; exit 1; }
 
-ask "$TEXT"
+ASK_ARGS=(--"$MODE")
+[ -n "$TASK_OVERRIDE" ] && ASK_ARGS+=(--task "$TASK_OVERRIDE")
+
+printf '%s\n' "$TEXT" | ask "${ASK_ARGS[@]}"
