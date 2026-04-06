@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 import importlib.util
 import pathlib
+import queue
 import subprocess
 import threading
+import time
 import tkinter as tk
-from tkinter import scrolledtext, ttk
+from tkinter import filedialog, scrolledtext, ttk
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
+LOG_DIR = pathlib.Path.home() / ".autonomy"
+HUB_LOG = LOG_DIR / "autonomy-hub.log"
 
 COMMANDS = [
     ("Ask (Floating)", ["ask-float.py"]),
@@ -28,56 +32,6 @@ def resolve_command(cmd):
     return [str(BASE_DIR / cmd[0]), *cmd[1:]]
 
 
-def run_command(cmd, status):
-    resolved = resolve_command(cmd)
-    try:
-        subprocess.Popen(resolved)
-        status.set(f"Launched: {' '.join(cmd)}")
-    except FileNotFoundError:
-        status.set(f"Missing: {cmd[0]}")
-    except Exception as exc:
-        status.set(f"Failed to launch {cmd[0]}: {exc}")
-
-
-def run_with_io(cmd, input_text, output_widget, status):
-    resolved = resolve_command(cmd)
-    output_widget.insert(tk.END, f"$ {' '.join(cmd)}\n")
-    output_widget.see(tk.END)
-
-    def worker():
-        try:
-            proc = subprocess.Popen(
-                resolved,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        except FileNotFoundError:
-            output_widget.insert(tk.END, f"Missing: {cmd[0]}\n")
-            output_widget.see(tk.END)
-            status.set(f"Missing: {cmd[0]}")
-            return
-        except Exception as exc:
-            output_widget.insert(tk.END, f"Failed to launch {cmd[0]}: {exc}\n")
-            output_widget.see(tk.END)
-            status.set(f"Failed to launch {cmd[0]}: {exc}")
-            return
-
-        try:
-            stdout, _ = proc.communicate(input=input_text or "", timeout=120)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            stdout, _ = proc.communicate()
-            stdout = f"{stdout}\n[timeout]\n"
-
-        output_widget.insert(tk.END, stdout + "\n")
-        output_widget.see(tk.END)
-        status.set(f"Completed: {' '.join(cmd)}")
-
-    threading.Thread(target=worker, daemon=True).start()
-
-
 def tray_available():
     return (
         importlib.util.find_spec("pystray") is not None
@@ -85,131 +39,247 @@ def tray_available():
     )
 
 
-def build_tray_icon(root, status, tray_state):
-    import pystray
-    from PIL import Image, ImageDraw
+class HubApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Autonomy Hub")
+        self.root.geometry("900x700")
 
-    size = 64
-    image = Image.new("RGB", (size, size), color="#1f1f1f")
-    draw = ImageDraw.Draw(image)
-    draw.rectangle((8, 8, size - 8, size - 8), outline="#7fd1ff", width=3)
-    draw.text((18, 18), "A", fill="#7fd1ff")
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-    def on_open(icon, _item):
-        icon.stop()
-        tray_state["icon"] = None
-        root.after(0, root.deiconify)
-        status.set("Restored from tray.")
+        self.status = tk.StringVar(value="Ready")
+        self.filter_var = tk.StringVar(value="")
+        self.timeout_var = tk.StringVar(value="120")
+        self.command_map = {label: cmd for label, cmd in COMMANDS}
+        self.output_queue = queue.Queue()
+        self.tray_icon = None
 
-    def on_quit(icon, _item):
-        icon.stop()
-        tray_state["icon"] = None
-        root.after(0, root.destroy)
+        self.build_ui()
+        self.populate_commands()
+        self.poll_output_queue()
 
-    menu = pystray.Menu(
-        pystray.MenuItem("Open Autonomy Hub", on_open),
-        pystray.MenuItem("Quit", on_quit),
-    )
-    return pystray.Icon("autonomy-hub", image, "Autonomy Hub", menu)
+    def build_ui(self):
+        frame = ttk.Frame(self.root, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
 
+        ttk.Label(frame, text="Autonomy Hub", font=("TkDefaultFont", 14, "bold")).pack(anchor=tk.W)
+        ttk.Label(frame, text="Unified launcher and runner for autonomy tools", foreground="#555").pack(anchor=tk.W, pady=(0, 10))
 
-def toggle_tray(root, status, tray_state):
-    if tray_state.get("icon") is None:
-        if not tray_available():
-            status.set("Tray support requires pystray and pillow.")
+        top = ttk.Frame(frame)
+        top.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(top, text="Filter:").pack(side=tk.LEFT)
+        filter_entry = ttk.Entry(top, textvariable=self.filter_var)
+        filter_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 8))
+        filter_entry.bind("<KeyRelease>", lambda _evt: self.populate_commands())
+
+        ttk.Label(top, text="Timeout (s):").pack(side=tk.LEFT)
+        ttk.Entry(top, width=8, textvariable=self.timeout_var).pack(side=tk.LEFT, padx=(6, 0))
+
+        self.selector = ttk.Combobox(frame, state="readonly")
+        self.selector.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(frame, text="Input (stdin):").pack(anchor=tk.W)
+        self.input_box = scrolledtext.ScrolledText(frame, height=7, wrap=tk.WORD)
+        self.input_box.pack(fill=tk.X, pady=(0, 8))
+
+        button_row = ttk.Frame(frame)
+        button_row.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Button(button_row, text="Launch Detached", command=self.launch_detached).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_row, text="Run with Input/Output", command=self.run_with_io).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_row, text="Open Proposal", command=self.open_proposal).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_row, text="Save Output", command=self.save_output).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_row, text="Toggle Tray", command=self.toggle_tray).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_row, text="Clear", command=lambda: self.output_box.delete("1.0", tk.END)).pack(side=tk.LEFT)
+
+        ttk.Label(frame, text="Output:").pack(anchor=tk.W)
+        self.output_box = scrolledtext.ScrolledText(frame, height=18, wrap=tk.WORD)
+        self.output_box.pack(fill=tk.BOTH, expand=True)
+        self.output_box.insert(tk.END, "Output will appear here.\n")
+
+        ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        ttk.Label(frame, textvariable=self.status, wraplength=850).pack(anchor=tk.W)
+
+    def populate_commands(self):
+        needle = self.filter_var.get().strip().lower()
+        labels = [label for label, _ in COMMANDS if needle in label.lower()]
+        if not labels:
+            labels = [label for label, _ in COMMANDS]
+
+        previous = self.selector.get()
+        self.selector["values"] = labels
+        if previous in labels:
+            self.selector.set(previous)
+        elif labels:
+            self.selector.set(labels[0])
+
+    def selected_cmd(self):
+        label = self.selector.get()
+        return self.command_map.get(label, COMMANDS[0][1])
+
+    def append_output(self, text):
+        self.output_box.insert(tk.END, text)
+        self.output_box.see(tk.END)
+        with HUB_LOG.open("a") as f:
+            f.write(text)
+
+    def set_status(self, text):
+        self.status.set(text)
+
+    def launch_detached(self):
+        cmd = self.selected_cmd()
+        resolved = resolve_command(cmd)
+        try:
+            subprocess.Popen(resolved)
+            self.set_status(f"Launched detached: {' '.join(cmd)}")
+            self.append_output(f"$ {' '.join(cmd)} [detached]\n")
+        except FileNotFoundError:
+            self.set_status(f"Missing: {cmd[0]}")
+        except Exception as exc:
+            self.set_status(f"Failed to launch {cmd[0]}: {exc}")
+
+    def run_with_io(self):
+        cmd = self.selected_cmd()
+        resolved = resolve_command(cmd)
+        input_text = self.input_box.get("1.0", tk.END)
+        timeout_s = self.parse_timeout()
+
+        self.append_output(f"\n$ {' '.join(cmd)}\n")
+        self.set_status(f"Running: {' '.join(cmd)}")
+
+        def worker():
+            started = time.time()
+            try:
+                proc = subprocess.Popen(
+                    resolved,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except FileNotFoundError:
+                self.output_queue.put(("output", f"Missing: {cmd[0]}\n"))
+                self.output_queue.put(("status", f"Missing: {cmd[0]}"))
+                return
+            except Exception as exc:
+                self.output_queue.put(("output", f"Failed to launch {cmd[0]}: {exc}\n"))
+                self.output_queue.put(("status", f"Failed to launch {cmd[0]}: {exc}"))
+                return
+
+            try:
+                if proc.stdin:
+                    proc.stdin.write(input_text)
+                    proc.stdin.close()
+
+                while True:
+                    line = proc.stdout.readline() if proc.stdout else ""
+                    if not line and proc.poll() is not None:
+                        break
+                    if line:
+                        self.output_queue.put(("output", line))
+
+                proc.wait(timeout=max(timeout_s, 1))
+                elapsed = time.time() - started
+                self.output_queue.put(("status", f"Completed: {' '.join(cmd)} in {elapsed:.1f}s (rc={proc.returncode})"))
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                self.output_queue.put(("output", "[timeout reached]\n"))
+                self.output_queue.put(("status", f"Timed out: {' '.join(cmd)}"))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def parse_timeout(self):
+        try:
+            value = int(self.timeout_var.get().strip())
+            return max(value, 1)
+        except ValueError:
+            self.timeout_var.set("120")
+            return 120
+
+    def poll_output_queue(self):
+        while True:
+            try:
+                typ, payload = self.output_queue.get_nowait()
+            except queue.Empty:
+                break
+
+            if typ == "output":
+                self.append_output(payload)
+            elif typ == "status":
+                self.set_status(payload)
+
+        self.root.after(100, self.poll_output_queue)
+
+    def open_proposal(self):
+        try:
+            subprocess.Popen(resolve_command(["proposal-ui.py"]))
+            self.set_status("Opened proposal-ui.py")
+        except Exception as exc:
+            self.set_status(f"Unable to open proposal-ui.py: {exc}")
+
+    def save_output(self):
+        path = filedialog.asksaveasfilename(
+            title="Save Autonomy Hub Output",
+            defaultextension=".log",
+            filetypes=[("Log files", "*.log"), ("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        if not path:
             return
-        icon = build_tray_icon(root, status, tray_state)
-        tray_state["icon"] = icon
-        root.withdraw()
-        threading.Thread(target=icon.run, daemon=True).start()
-        status.set("Minimized to tray.")
-        return
 
-    icon = tray_state.get("icon")
-    if icon:
-        icon.stop()
-    tray_state["icon"] = None
-    root.deiconify()
-    status.set("Restored from tray.")
+        try:
+            pathlib.Path(path).write_text(self.output_box.get("1.0", tk.END))
+            self.set_status(f"Saved output: {path}")
+        except Exception as exc:
+            self.set_status(f"Failed to save output: {exc}")
 
+    def build_tray_icon(self):
+        import pystray
+        from PIL import Image, ImageDraw
 
-def build_ui(root):
-    root.title("Autonomy Hub")
-    root.geometry("760x640")
+        image = Image.new("RGB", (64, 64), color="#1f1f1f")
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((8, 8, 56, 56), outline="#7fd1ff", width=3)
+        draw.text((22, 20), "A", fill="#7fd1ff")
 
-    frame = ttk.Frame(root, padding=12)
-    frame.pack(fill=tk.BOTH, expand=True)
+        def on_open(icon, _item):
+            icon.stop()
+            self.tray_icon = None
+            self.root.after(0, self.root.deiconify)
+            self.root.after(0, lambda: self.set_status("Restored from tray."))
 
-    ttk.Label(frame, text="Autonomy Hub", font=("TkDefaultFont", 14, "bold")).pack(anchor=tk.W)
-    ttk.Label(frame, text="Launch core tools", foreground="#555").pack(anchor=tk.W, pady=(0, 12))
+        def on_quit(icon, _item):
+            icon.stop()
+            self.tray_icon = None
+            self.root.after(0, self.root.destroy)
 
-    status = tk.StringVar(value="Ready")
-    tray_state = {"icon": None}
+        menu = pystray.Menu(
+            pystray.MenuItem("Open Autonomy Hub", on_open),
+            pystray.MenuItem("Quit", on_quit),
+        )
+        return pystray.Icon("autonomy-hub", image, "Autonomy Hub", menu)
 
-    selector = ttk.Combobox(
-        frame,
-        values=[label for label, _cmd in COMMANDS],
-        state="readonly",
-    )
-    selector.current(0)
-    selector.pack(fill=tk.X, pady=(0, 6))
+    def toggle_tray(self):
+        if self.tray_icon is None:
+            if not tray_available():
+                self.set_status("Tray support requires pystray and pillow.")
+                return
+            self.tray_icon = self.build_tray_icon()
+            self.root.withdraw()
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+            self.set_status("Minimized to tray.")
+            return
 
-    input_box = scrolledtext.ScrolledText(frame, height=6, wrap=tk.WORD)
-    input_box.pack(fill=tk.X, pady=(0, 6))
-    input_box.insert(tk.END, "Optional stdin input for the selected tool.\n")
-
-    buttons = ttk.Frame(frame)
-    buttons.pack(fill=tk.X, pady=(0, 8))
-
-    def selected_cmd():
-        label = selector.get()
-        for name, cmd in COMMANDS:
-            if name == label:
-                return cmd
-        return COMMANDS[0][1]
-
-    ttk.Button(
-        buttons,
-        text="Launch",
-        command=lambda: run_command(selected_cmd(), status),
-    ).pack(side=tk.LEFT, padx=(0, 6))
-
-    ttk.Button(
-        buttons,
-        text="Run with Input",
-        command=lambda: run_with_io(
-            selected_cmd(),
-            input_box.get("1.0", tk.END),
-            output_box,
-            status,
-        ),
-    ).pack(side=tk.LEFT, padx=(0, 6))
-
-    ttk.Button(
-        buttons,
-        text="Clear Output",
-        command=lambda: output_box.delete("1.0", tk.END),
-    ).pack(side=tk.LEFT, padx=(0, 6))
-
-    ttk.Button(
-        buttons,
-        text="Toggle Tray",
-        command=lambda: toggle_tray(root, status, tray_state),
-    ).pack(side=tk.LEFT)
-
-    output_box = scrolledtext.ScrolledText(frame, height=14, wrap=tk.WORD)
-    output_box.pack(fill=tk.BOTH, expand=True)
-    output_box.insert(tk.END, "Output will appear here.\n")
-
-    ttk.Separator(frame, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=12)
-
-    ttk.Label(frame, textvariable=status, wraplength=700).pack(anchor=tk.W)
-    ttk.Button(frame, text="Close", command=root.destroy).pack(anchor=tk.E, pady=(12, 0))
+        self.tray_icon.stop()
+        self.tray_icon = None
+        self.root.deiconify()
+        self.set_status("Restored from tray.")
 
 
 def main():
     root = tk.Tk()
-    build_ui(root)
+    HubApp(root)
     root.mainloop()
 
 
