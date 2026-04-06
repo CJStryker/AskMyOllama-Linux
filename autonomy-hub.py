@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 import importlib.util
 import pathlib
+import os
 import queue
 import subprocess
 import threading
 import time
+import shutil
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 BASE_DIR = pathlib.Path(__file__).resolve().parent
 LOG_DIR = pathlib.Path.home() / ".autonomy"
@@ -39,6 +41,10 @@ def tray_available():
     )
 
 
+def shutil_which(binary):
+    return shutil.which(binary)
+
+
 class HubApp:
     def __init__(self, root):
         self.root = root
@@ -50,9 +56,11 @@ class HubApp:
         self.status = tk.StringVar(value="Ready")
         self.filter_var = tk.StringVar(value="")
         self.timeout_var = tk.StringVar(value="120")
+        self.args_var = tk.StringVar(value="")
         self.command_map = {label: cmd for label, cmd in COMMANDS}
         self.output_queue = queue.Queue()
         self.tray_icon = None
+        self.run_history = []
 
         self.build_ui()
         self.populate_commands()
@@ -76,6 +84,11 @@ class HubApp:
         ttk.Label(top, text="Timeout (s):").pack(side=tk.LEFT)
         ttk.Entry(top, width=8, textvariable=self.timeout_var).pack(side=tk.LEFT, padx=(6, 0))
 
+        args_row = ttk.Frame(frame)
+        args_row.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(args_row, text="Args:").pack(side=tk.LEFT)
+        ttk.Entry(args_row, textvariable=self.args_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+
         self.selector = ttk.Combobox(frame, state="readonly")
         self.selector.pack(fill=tk.X, pady=(0, 8))
 
@@ -88,8 +101,10 @@ class HubApp:
 
         ttk.Button(button_row, text="Launch Detached", command=self.launch_detached).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_row, text="Run with Input/Output", command=self.run_with_io).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_row, text="System Check", command=self.run_system_check).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_row, text="Open Proposal", command=self.open_proposal).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_row, text="Save Output", command=self.save_output).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(button_row, text="Copy Output", command=self.copy_output).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_row, text="Toggle Tray", command=self.toggle_tray).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Button(button_row, text="Clear", command=lambda: self.output_box.delete("1.0", tk.END)).pack(side=tk.LEFT)
 
@@ -116,7 +131,11 @@ class HubApp:
 
     def selected_cmd(self):
         label = self.selector.get()
-        return self.command_map.get(label, COMMANDS[0][1])
+        cmd = list(self.command_map.get(label, COMMANDS[0][1]))
+        extra = self.args_var.get().strip()
+        if extra:
+            cmd.extend(extra.split())
+        return cmd
 
     def append_output(self, text):
         self.output_box.insert(tk.END, text)
@@ -134,6 +153,7 @@ class HubApp:
             subprocess.Popen(resolved)
             self.set_status(f"Launched detached: {' '.join(cmd)}")
             self.append_output(f"$ {' '.join(cmd)} [detached]\n")
+            self.record_history(cmd, mode="detached")
         except FileNotFoundError:
             self.set_status(f"Missing: {cmd[0]}")
         except Exception as exc:
@@ -147,6 +167,7 @@ class HubApp:
 
         self.append_output(f"\n$ {' '.join(cmd)}\n")
         self.set_status(f"Running: {' '.join(cmd)}")
+        self.record_history(cmd, mode="io")
 
         def worker():
             started = time.time()
@@ -233,6 +254,36 @@ class HubApp:
             self.set_status(f"Saved output: {path}")
         except Exception as exc:
             self.set_status(f"Failed to save output: {exc}")
+
+    def copy_output(self):
+        text = self.output_box.get("1.0", tk.END)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
+        self.set_status("Copied output to clipboard.")
+
+    def record_history(self, cmd, mode):
+        stamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        entry = f"{stamp} [{mode}] {' '.join(cmd)}"
+        self.run_history.append(entry)
+        self.append_output(f"[history] {entry}\n")
+
+    def run_system_check(self):
+        checks = []
+        checks.append(("python", shutil_which("python3") or shutil_which("python")))
+        checks.append(("jq", shutil_which("jq")))
+        checks.append(("curl", shutil_which("curl")))
+        checks.append(("ask", os.path.exists(str(BASE_DIR / "ask"))))
+        checks.append(("planner.py", os.path.exists(str(BASE_DIR / "planner.py"))))
+        checks.append(("proposal-ui.py", os.path.exists(str(BASE_DIR / "proposal-ui.py"))))
+
+        lines = ["System check results:"]
+        for name, ok in checks:
+            state = "OK" if ok else "MISSING"
+            lines.append(f"- {name}: {state}")
+        report = "\n".join(lines)
+        self.append_output(report + "\n")
+        self.set_status("System check completed.")
+        messagebox.showinfo("Autonomy Hub Check", report)
 
     def build_tray_icon(self):
         import pystray
